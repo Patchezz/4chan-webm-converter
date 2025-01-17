@@ -1,8 +1,7 @@
 #!/bin/bash
 
-# Input and output folders
-INPUT_DIR="input"
-OUTPUT_DIR="output"
+# Load configuration
+source config.sh
 
 # Create output directory if it doesn't exist
 mkdir -p "$OUTPUT_DIR"
@@ -33,20 +32,29 @@ for INPUT_FILE in "$INPUT_DIR"/*.mp4; do
     ORIGINAL_WIDTH=$(echo $RESOLUTION | cut -d'x' -f1)
     ORIGINAL_HEIGHT=$(echo $RESOLUTION | cut -d'x' -f2)
 
-    # Calculate new resolution
-    NEW_WIDTH=$((ORIGINAL_WIDTH / 3))
-    NEW_HEIGHT=$((ORIGINAL_HEIGHT / 3))
+    # Maintain aspect ratio if either dimension exceeds max dimensions
+    if [ $ORIGINAL_WIDTH -gt $MAX_WIDTH ] || [ $ORIGINAL_HEIGHT -gt $MAX_HEIGHT ]; then
+        if [ $ORIGINAL_WIDTH -ge $ORIGINAL_HEIGHT ]; then
+            NEW_WIDTH=$MAX_WIDTH
+            NEW_HEIGHT=$((MAX_WIDTH * ORIGINAL_HEIGHT / ORIGINAL_WIDTH))
+        else
+            NEW_HEIGHT=$MAX_HEIGHT
+            NEW_WIDTH=$((MAX_HEIGHT * ORIGINAL_WIDTH / ORIGINAL_HEIGHT))
+        fi
+    else
+        NEW_WIDTH=$ORIGINAL_WIDTH
+        NEW_HEIGHT=$ORIGINAL_HEIGHT
+    fi
 
-    # Target size in KB
-    TARGET_SIZE_KB=3900
+    echo "New resolution: ${NEW_WIDTH}x${NEW_HEIGHT}"
 
     # Initial bitrate guess
     BITRATE=$(calculate_bitrate $TARGET_SIZE_KB $DURATION)
 
     echo "Initial bitrate guess: ${BITRATE}kbit/s"
 
-    # Start with superfast preset
-    PRESET="superfast"
+    PRESET=$INITIAL_PRESET
+    LAST_RUN=false
 
     while true; do
         echo "Converting $INPUT_FILE with bitrate ${BITRATE}kbit/s and preset $PRESET..."
@@ -76,29 +84,43 @@ for INPUT_FILE in "$INPUT_DIR"/*.mp4; do
 
         echo "Output file size: ${OUTPUT_SIZE_KB}KB"
 
-        # Check if the output size is within the target size range
-        if [ $OUTPUT_SIZE_KB -le $TARGET_SIZE_KB ] && [ $OUTPUT_SIZE_KB -ge $((TARGET_SIZE_KB - 100)) ]; then
-            echo "Successfully converted $INPUT_FILE to $OUTPUT_FILE within size limit."
+        if [ "$LAST_RUN" = true ]; then
+            echo "Final run completed. File saved as $OUTPUT_FILE."
             break
         fi
 
-        # Adjust bitrate
+        if [ $OUTPUT_SIZE_KB -le $TARGET_SIZE_KB ] && [ $OUTPUT_SIZE_KB -ge $((TARGET_SIZE_KB - CLOSE_TO_LIMIT_THRESHOLD)) ]; then
+            echo "File is within acceptable size range."
+            LAST_RUN=true
+            BITRATE=$((BITRATE + (BITRATE * FINAL_RUN_EXTRA_PERCENT / 100)))
+            echo "Final run with increased bitrate: ${BITRATE}kbit/s."
+            PRESET="slow"
+            continue
+        fi
+
+        # Adjust bitrate based on file size distance from target
         if [ $OUTPUT_SIZE_KB -gt $TARGET_SIZE_KB ]; then
-            BITRATE=$((BITRATE - 100))
+            if [ $((OUTPUT_SIZE_KB - TARGET_SIZE_KB)) -gt $FAR_FROM_LIMIT_THRESHOLD ]; then
+                BITRATE=$((BITRATE - LARGE_ADJUSTMENT_STEP))
+            else
+                BITRATE=$((BITRATE - SMALL_ADJUSTMENT_STEP))
+            fi
             echo "File too large. Reducing bitrate to ${BITRATE}kbit/s."
         else
-            BITRATE=$((BITRATE + 100))
+            if [ $((TARGET_SIZE_KB - OUTPUT_SIZE_KB)) -gt $FAR_FROM_LIMIT_THRESHOLD ]; then
+                BITRATE=$((BITRATE + LARGE_ADJUSTMENT_STEP))
+            else
+                BITRATE=$((BITRATE + SMALL_ADJUSTMENT_STEP))
+            fi
             echo "File too small. Increasing bitrate to ${BITRATE}kbit/s."
         fi
 
-        # Adjust preset to slow if close to target size
-        if [ $PRESET == "superfast" ] && [ $OUTPUT_SIZE_KB -le $((TARGET_SIZE_KB + 500)) ]; then
+        # Adjust preset to slow if within close range of the target size
+        if [ $PRESET == "fast" ] && [ $OUTPUT_SIZE_KB -le $((TARGET_SIZE_KB + CLOSE_TO_LIMIT_THRESHOLD)) ] && [ $OUTPUT_SIZE_KB -ge $((TARGET_SIZE_KB - CLOSE_TO_LIMIT_THRESHOLD)) ]; then
             PRESET="slow"
             echo "Switching to slow preset for final encoding."
         fi
-
     done
-
 done
 
 echo "All conversions completed."
