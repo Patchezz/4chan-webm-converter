@@ -29,7 +29,9 @@ Put mp4 files in `input` directory and run the script:
 Run the below command
 
 ```
-sudo apt-get install handbrake-cli ffmpeg
+sudo apt update
+sudo apt-get install ffmpeg flatpak
+sudo flatpak install fr.handbrake.ghb
 ```
 ### License
 
