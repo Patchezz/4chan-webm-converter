@@ -13,6 +13,13 @@ calculate_bitrate() {
     echo $((target_size_kb * 8 / duration_s))
 }
 
+# Function to calculate step adjustment using bc for floating-point math
+calculate_step_adjustment() {
+    local length_of_video=$1
+    local base_step=$2
+    echo $((length_of_video * base_step))
+}
+
 # Loop through all .mp4 files in the input directory
 for INPUT_FILE in "$INPUT_DIR"/*.mp4; do
     # Extract filename without extension
@@ -67,7 +74,6 @@ for INPUT_FILE in "$INPUT_DIR"/*.mp4; do
             --height $NEW_HEIGHT \
             --vb $BITRATE \
             --encoder VP9 \
-            --two-pass \
             --audio none \
             --subtitle none \
             --encoder-preset $PRESET \
@@ -89,6 +95,11 @@ for INPUT_FILE in "$INPUT_DIR"/*.mp4; do
             break
         fi
 
+        # Calculate adjustment steps dynamically based on video length
+        LARGE_ADJUSTMENT=$(calculate_step_adjustment $DURATION $LARGE_ADJUSTMENT_STEP)
+        SMALL_ADJUSTMENT=$(calculate_step_adjustment $DURATION $SMALL_ADJUSTMENT_STEP)
+
+
         if [ $OUTPUT_SIZE_KB -le $TARGET_SIZE_KB ] && [ $OUTPUT_SIZE_KB -ge $((TARGET_SIZE_KB - CLOSE_TO_LIMIT_THRESHOLD)) ]; then
             echo "File is within acceptable size range."
             LAST_RUN=true
@@ -98,19 +109,18 @@ for INPUT_FILE in "$INPUT_DIR"/*.mp4; do
             continue
         fi
 
-        # Adjust bitrate based on file size distance from target
         if [ $OUTPUT_SIZE_KB -gt $TARGET_SIZE_KB ]; then
             if [ $((OUTPUT_SIZE_KB - TARGET_SIZE_KB)) -gt $FAR_FROM_LIMIT_THRESHOLD ]; then
-                BITRATE=$((BITRATE - LARGE_ADJUSTMENT_STEP))
+                BITRATE=$((BITRATE - LARGE_ADJUSTMENT))
             else
-                BITRATE=$((BITRATE - SMALL_ADJUSTMENT_STEP))
+                BITRATE=$((BITRATE - SMALL_ADJUSTMENT))
             fi
             echo "File too large. Reducing bitrate to ${BITRATE}kbit/s."
         else
             if [ $((TARGET_SIZE_KB - OUTPUT_SIZE_KB)) -gt $FAR_FROM_LIMIT_THRESHOLD ]; then
-                BITRATE=$((BITRATE + LARGE_ADJUSTMENT_STEP))
+                BITRATE=$((BITRATE + LARGE_ADJUSTMENT))
             else
-                BITRATE=$((BITRATE + SMALL_ADJUSTMENT_STEP))
+                BITRATE=$((BITRATE + SMALL_ADJUSTMENT))
             fi
             echo "File too small. Increasing bitrate to ${BITRATE}kbit/s."
         fi
